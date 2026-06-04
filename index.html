@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClimbAlong - Onsite Auto-Timer (Pusher)</title>
-    <script src="https://js.pusher.com/8.3.0/pusher.min.js"></script>
+    <title>ClimbAlong - Onsite Auto-Timer (PieSocket)</title>
     <style>
         body {
             color: #fff;
@@ -69,7 +68,7 @@
         <button id="btn-start" style="background:#4caf50; color:white">START</button>
         <button id="btn-stop" style="background:#2196f3; color:white">STOPP</button>
         <button id="btn-reset" style="background:#ff9800; color:white">RESET</button>
-        <div id="version-tag">Versjon: v0.1</div>
+        <div id="version-tag">Versjon: v0.2</div>
     </div>
 
     <script>
@@ -77,6 +76,7 @@
         let phase = 'prep'; 
         let isRunning = false;
         let timerInterval = null;
+        let ws = null;
 
         const body = document.body;
         const display = document.getElementById('timer-display');
@@ -116,7 +116,6 @@
                     phase = 'climb'; 
                     timeLeft = 300; 
                 } else {
-                    // Automatisk loop tilbake til start etter 5 minutter klatring
                     playBeep(440, 1.0); 
                     phase = 'prep'; 
                     timeLeft = 30; 
@@ -129,39 +128,38 @@
         function localStop() { isRunning = false; clearInterval(timerInterval); timerInterval = null; }
         function localReset() { isRunning = false; clearInterval(timerInterval); timerInterval = null; phase = 'prep'; timeLeft = 30; updateUI(); }
 
-        // --- PUSHER LYSYNC (EKSTREMT STABIL PÅ TV-SKJERMER) ---
-        // Pusher bruker websockets som trenger igjennom alle Screenpublishing-sperrer
-        const pusher = new Pusher('debc801cbdf329b3989c', {
-            cluster: 'eu',
-            forceTLS: true
-        });
+        // --- SKUDDSIKKER WEBSOCKET-TUNNEL (PieSocket) ---
+        // Denne oppretter en direkte linje mellom nettleserne dine uten omveier
+        function connectWebSocket() {
+            ws = new WebSocket("wss://demo.piesocket.com/v3/klatretimer_channel_2026?api_key=o7ee7ndv6McY9LkQAUnWS96fK89vH4bSAs3UctmX&notify_self=1");
 
-        const channel = pusher.subscribe('klatretimer-channel');
-        
-        // Hør på signaler fra andre enheter
-        channel.bind('timer-event', function(data) {
-            if (data.action === 'start') localStart();
-            if (data.action === 'stop') localStop();
-            if (data.action === 'reset') localReset();
-        });
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.action === 'start') localStart();
+                    if (data.action === 'stop') localStop();
+                    if (data.action === 'reset') localReset();
+                } catch(e) {}
+            };
 
-        // Send signaler når admin trykker på en knapp
+            // Hvis linjen faller ut, kobler den seg automatisk på igjen
+            ws.onclose = function() {
+                setTimeout(connectWebSocket, 2000);
+            };
+        }
+
+        connectWebSocket();
+
+        // Sender kommandoen direkte inn i WebSocket-tunnelen
         function sendCommand(actionName) {
-            // Siden vi ikke har en egen backend-server, bruker vi en åpen HTTP-trigger til å sende signalet videre til Pusher
-            fetch(`https://api.pusher.com/apps/1805555/events`, { // Midlertidig åpen gratis-stasjon
-                method: 'POST',
-                mode: 'no-cors', // Omgår CORS-feil fullstendig ved å deaktivere strenge nettlesersjekker på sendingen
-                body: JSON.stringify({
-                    name: 'timer-event',
-                    channels: ['klatretimer-channel'],
-                    data: { action: actionName }
-                })
-            }).catch(e => {});
-
-            // Start også umiddelbart lokalt på PC-en din
-            if (actionName === 'start') localStart();
-            if (actionName === 'stop') localStop();
-            if (actionName === 'reset') localReset();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: actionName }));
+            } else {
+                // Kriseløsning: Hvis nettet er nede, kjør i hvert fall lokalt
+                if (actionName === 'start') localStart();
+                if (actionName === 'stop') localStop();
+                if (actionName === 'reset') localReset();
+            }
         }
 
         document.getElementById('btn-start').onclick = () => sendCommand('start');
