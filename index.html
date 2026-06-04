@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClimbAlong - Onsite Auto-Timer</title>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <title>ClimbAlong - Lokal Timer</title>
     <style>
         body {
             color: #fff;
@@ -32,14 +31,12 @@
             letter-spacing: 2px;
             margin: 0;
         }
-        /* Admin-panelet er nå alltid synlig som standard på denne siden */
         #admin-panel {
-            display: block; 
             position: fixed;
             bottom: 30px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0,0,0,0.9);
+            background: rgba(0,0,0,0.8);
             padding: 20px;
             border-radius: 12px;
             z-index: 9999;
@@ -76,7 +73,7 @@
         const display = document.getElementById('timer-display');
         const phaseHeader = document.getElementById('phase-header');
 
-        // Lydfunksjon
+        // Lydfunksjon (Web Audio API)
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         function playBeep(frequency, duration) {
             try {
@@ -108,46 +105,44 @@
                 if (phase === 'prep') {
                     playBeep(880, 0.5); 
                     phase = 'climb'; 
-                    timeLeft = 300; 
+                    timeLeft = 300; // 5 minutter klatring
                 } else {
-                    // Automatisk loop: Går tilbake til klargjøring når 5 min er ferdig
+                    // Automatisk loop tilbake til start etter 5 minutter
                     playBeep(440, 1.0); 
                     phase = 'prep'; 
-                    timeLeft = 30; 
+                    timeLeft = 30; // 30 sekunder klargjøring
                 }
                 updateUI();
             }
         }
 
-        function localStart() { isRunning = true; if (!timerInterval) timerInterval = setInterval(tick, 1000); }
-        function localStop() { isRunning = false; clearInterval(timerInterval); timerInterval = null; }
-        function localReset() { isRunning = false; clearInterval(timerInterval); timerInterval = null; phase = 'prep'; timeLeft = 30; updateUI(); }
-
-        // --- SUPABASE SANNTIDSKANAL ---
-        const supabase = window.supabase.createClient("https://pvwqyvsmgbyvxcguzbsh.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2d3F5dnNtZ2J5dnhjZ3V6YnNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTU5NTI1MDAsImV4cCI6MjAyNzUzODUwMH0.3eX66_rV8Zp7p4WqKz7OSeiHk1pA3wD8nE1oR7yGw2b3c4d5e6f7g");
-        
-        const channel = supabase.channel('klatretimer-kanal', {
-            config: { broadcast: { self: true } }
-        })
-        .on('broadcast', { event: 'timer-action' }, ({ payload }) => {
-            if (payload.action === 'start') localStart();
-            if (payload.action === 'stop') localStop();
-            if (payload.action === 'reset') localReset();
-        })
-        .subscribe();
-
-        // Sender kommandoer ut på nettverket
-        function sendCommand(actionName) {
-            channel.send({
-                type: 'broadcast',
-                event: 'timer-action',
-                payload: { action: actionName }
-            });
+        // --- LOKALE HANDLINGER (Ingen internett-forsinkelse) ---
+        function localStart() { 
+            isRunning = true; 
+            if (!timerInterval) {
+                timerInterval = setInterval(tick, 1000);
+            }
         }
 
-        document.getElementById('btn-start').onclick = () => sendCommand('start');
-        document.getElementById('btn-stop').onclick = () => sendCommand('stop');
-        document.getElementById('btn-reset').onclick = () => sendCommand('reset');
+        function localStop() { 
+            isRunning = false; 
+            clearInterval(timerInterval); 
+            timerInterval = null; 
+        }
+
+        function localReset() { 
+            isRunning = false; 
+            clearInterval(timerInterval); 
+            timerInterval = null; 
+            phase = 'prep'; 
+            timeLeft = 30; 
+            updateUI(); 
+        }
+
+        // Koble knappene direkte til de lokale funksjonene
+        document.getElementById('btn-start').onclick = () => localStart();
+        document.getElementById('btn-stop').onclick = () => localStop();
+        document.getElementById('btn-reset').onclick = () => localReset();
 
         updateUI(); 
     </script>
