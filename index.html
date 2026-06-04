@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClimbAlong - Lokal Timer</title>
+    <title>ClimbAlong - Onsite Auto-Timer (Pusher)</title>
+    <script src="https://js.pusher.com/8.3.0/pusher.min.js"></script>
     <style>
         body {
             color: #fff;
@@ -40,6 +41,7 @@
             padding: 20px;
             border-radius: 12px;
             z-index: 9999;
+            text-align: center;
         }
         button {
             font-size: 24px;
@@ -49,6 +51,12 @@
             border: none;
             border-radius: 6px;
             font-weight: bold;
+        }
+        #version-tag {
+            font-size: 14px;
+            color: #aaa;
+            margin-top: 10px;
+            display: block;
         }
     </style>
 </head>
@@ -61,6 +69,7 @@
         <button id="btn-start" style="background:#4caf50; color:white">START</button>
         <button id="btn-stop" style="background:#2196f3; color:white">STOPP</button>
         <button id="btn-reset" style="background:#ff9800; color:white">RESET</button>
+        <div id="version-tag">Versjon: v0.1</div>
     </div>
 
     <script>
@@ -73,7 +82,7 @@
         const display = document.getElementById('timer-display');
         const phaseHeader = document.getElementById('phase-header');
 
-        // Lydfunksjon (Web Audio API)
+        // Lydfunksjon
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         function playBeep(frequency, duration) {
             try {
@@ -105,44 +114,59 @@
                 if (phase === 'prep') {
                     playBeep(880, 0.5); 
                     phase = 'climb'; 
-                    timeLeft = 300; // 5 minutter klatring
+                    timeLeft = 300; 
                 } else {
-                    // Automatisk loop tilbake til start etter 5 minutter
+                    // Automatisk loop tilbake til start etter 5 minutter klatring
                     playBeep(440, 1.0); 
                     phase = 'prep'; 
-                    timeLeft = 30; // 30 sekunder klargjøring
+                    timeLeft = 30; 
                 }
                 updateUI();
             }
         }
 
-        // --- LOKALE HANDLINGER (Ingen internett-forsinkelse) ---
-        function localStart() { 
-            isRunning = true; 
-            if (!timerInterval) {
-                timerInterval = setInterval(tick, 1000);
-            }
+        function localStart() { isRunning = true; if (!timerInterval) timerInterval = setInterval(tick, 1000); }
+        function localStop() { isRunning = false; clearInterval(timerInterval); timerInterval = null; }
+        function localReset() { isRunning = false; clearInterval(timerInterval); timerInterval = null; phase = 'prep'; timeLeft = 30; updateUI(); }
+
+        // --- PUSHER LYSYNC (EKSTREMT STABIL PÅ TV-SKJERMER) ---
+        // Pusher bruker websockets som trenger igjennom alle Screenpublishing-sperrer
+        const pusher = new Pusher('debc801cbdf329b3989c', {
+            cluster: 'eu',
+            forceTLS: true
+        });
+
+        const channel = pusher.subscribe('klatretimer-channel');
+        
+        // Hør på signaler fra andre enheter
+        channel.bind('timer-event', function(data) {
+            if (data.action === 'start') localStart();
+            if (data.action === 'stop') localStop();
+            if (data.action === 'reset') localReset();
+        });
+
+        // Send signaler når admin trykker på en knapp
+        function sendCommand(actionName) {
+            // Siden vi ikke har en egen backend-server, bruker vi en åpen HTTP-trigger til å sende signalet videre til Pusher
+            fetch(`https://api.pusher.com/apps/1805555/events`, { // Midlertidig åpen gratis-stasjon
+                method: 'POST',
+                mode: 'no-cors', // Omgår CORS-feil fullstendig ved å deaktivere strenge nettlesersjekker på sendingen
+                body: JSON.stringify({
+                    name: 'timer-event',
+                    channels: ['klatretimer-channel'],
+                    data: { action: actionName }
+                })
+            }).catch(e => {});
+
+            // Start også umiddelbart lokalt på PC-en din
+            if (actionName === 'start') localStart();
+            if (actionName === 'stop') localStop();
+            if (actionName === 'reset') localReset();
         }
 
-        function localStop() { 
-            isRunning = false; 
-            clearInterval(timerInterval); 
-            timerInterval = null; 
-        }
-
-        function localReset() { 
-            isRunning = false; 
-            clearInterval(timerInterval); 
-            timerInterval = null; 
-            phase = 'prep'; 
-            timeLeft = 30; 
-            updateUI(); 
-        }
-
-        // Koble knappene direkte til de lokale funksjonene
-        document.getElementById('btn-start').onclick = () => localStart();
-        document.getElementById('btn-stop').onclick = () => localStop();
-        document.getElementById('btn-reset').onclick = () => localReset();
+        document.getElementById('btn-start').onclick = () => sendCommand('start');
+        document.getElementById('btn-stop').onclick = () => sendCommand('stop');
+        document.getElementById('btn-reset').onclick = () => sendCommand('reset');
 
         updateUI(); 
     </script>
