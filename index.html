@@ -43,7 +43,7 @@
 
     <div id="phase-header">KLAR</div>
     <div id="timer-display">00:30</div>
-    <div id="version-tag">Versjon: v0.8 (Screenpublishing-Native)</div>
+    <div id="version-tag">Versjon: v0.9 (Fixed Countdown)</div>
 
     <script>
         const body = document.body;
@@ -54,46 +54,51 @@
         let phase = 'prep';
         let timerInterval = null;
 
+        // Sjekk funksjon for å tegne tallene på skjermen korrekt
+        function renderClock() {
+            let mins = Math.floor(timeLeft / 60);
+            let secs = timeLeft % 60;
+            display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
         // Sjekk hva URL-en slutter på (?status=...)
         const urlParams = new URLSearchParams(window.location.search);
         const status = urlParams.get('status');
 
         if (status === 'start') {
-            // Hvis URL-en slutter på ?status=start, starter nedtellingen automatisk med en gang siden lastes inn!
             phase = 'prep';
             timeLeft = 30;
             body.style.backgroundColor = "#f44336"; // Rød
             phaseHeader.innerText = "Klargjøring (30s)";
+            renderClock(); // Vis 00:30 med en gang
             
             timerInterval = setInterval(() => {
                 if (timeLeft > 0) {
                     timeLeft--;
-                    let mins = Math.floor(timeLeft / 60);
-                    let secs = timeLeft % 60;
-                    display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                    renderClock(); // FIKSET: Nå oppdateres tallene på skjermen hvert eneste sekund!
                 } else {
                     if (phase === 'prep') {
                         phase = 'climb';
                         timeLeft = 300; // 5 minutter klatring
                         body.style.backgroundColor = "#4caf50"; // Grønn
                         phaseHeader.innerText = "Klatring (5 min)";
+                        renderClock();
                     } else {
-                        // Automatisk loop: Tilbake til klargjøring
+                        // Automatisk loop: Tilbane til klargjøring
                         phase = 'prep';
                         timeLeft = 30;
                         body.style.backgroundColor = "#f44336";
                         phaseHeader.innerText = "Klargjøring (30s)";
+                        renderClock();
                     }
                 }
             }, 1000);
 
         } else if (status === 'stopp') {
-            // Vis en frossen rød skjerm på 00:30 (Pause/Stopp)
             body.style.backgroundColor = "#f44336";
             phaseHeader.innerText = "Klargjøring (Stoppet)";
             display.innerText = "00:30";
         } else {
-            // Standardvisning hvis man bare åpner siden vanlig
             body.style.backgroundColor = "#555";
             phaseHeader.innerText = "KLAR TIL START";
             display.innerText = "00:30";
