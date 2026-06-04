@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClimbAlong - Onsite Auto-Timer (WallClock)</title>
+    <title>ClimbAlong - Onsite Auto-Timer (JSONSync)</title>
     <style>
         body {
             color: #fff;
@@ -31,11 +31,30 @@
             letter-spacing: 2px;
             margin: 0;
         }
-        #version-tag {
+        #admin-panel {
             position: fixed;
-            bottom: 20px;
-            font-size: 14px;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.85);
+            padding: 15px 25px;
+            border-radius: 12px;
+            z-index: 9999;
+            text-align: center;
+        }
+        button {
+            font-size: 20px;
+            padding: 12px 25px;
+            margin: 5px;
+            cursor: pointer;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+        }
+        #version-tag {
+            font-size: 12px;
             color: #888;
+            margin-top: 8px;
         }
     </style>
 </head>
@@ -43,16 +62,30 @@
 
     <div id="phase-header">Klargjøring (30s)</div>
     <div id="timer-display">00:30</div>
-    <div id="version-tag">Versjon: v0.5 (Autopilot)</div>
+
+    <div id="admin-panel">
+        <button id="btn-start" style="background:#4caf50; color:white">START</button>
+        <button id="btn-stop" style="background:#e91e63; color:white">STOPP</button>
+        <button id="btn-reset" style="background:#ff9800; color:white">RESET</button>
+        <div id="version-tag">Versjon: v0.6 (On-Demand)</div>
+    </div>
 
     <script>
+        // --- GLOBALE STATSVARIABLER ---
+        let state = {
+            startTime: 0,       // Unix-tidspunkt for når loopen startet
+            isPaused: true,     // Er timeren stoppet?
+            pauseTimeLeft: 30,  // Hvor mange sekunder var igjen da vi stoppet?
+            phase: 'prep'       // 'prep' eller 'climb'
+        };
+
         const body = document.body;
         const display = document.getElementById('timer-display');
         const phaseHeader = document.getElementById('phase-header');
 
         // Lydfunksjon
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        let lastBeepRound = -1;
+        let lastBeepRound = "";
 
         function playBeep(frequency, duration) {
             try {
@@ -67,41 +100,48 @@
             } catch(e) {}
         }
 
-        function updateTimer() {
-            // 1. Hent nøyaktig antall sekunder siden midnatt i dag basert på lokal klokke
-            const now = new Date();
-            const totalSecondsToday = (now.getHours() * 3600) + (now.getMinutes() * 60) + now.getSeconds();
-            
-            // 2. En hel runde varer i 330 sekunder (30s klargjøring + 300s klatring)
-            const ROUND_DURATION = 330; 
-            const currentRoundNumber = Math.floor(totalSecondsToday / ROUND_DURATION);
-            const secondsIntoCurrentRound = totalSecondsToday % ROUND_DURATION;
+        // --- MATEMATIKKEN SOM REGNER UT TIDEN ---
+        function calculateTime() {
+            if (state.startTime === 0) {
+                // Helt i ro / Reset-tilstand
+                state.phase = 'prep';
+                state.pauseTimeLeft = 30;
+                renderUI(30, 'Klargjøring (30s)', "#f44336");
+                return;
+            }
 
-            // 3. Sjekk om vi er i klargjøring (første 30 sekunder) eller klatring (neste 300 sekunder)
-            if (secondsIntoCurrentRound < 30) {
-                // KLARGJØRING
-                const timeLeft = 30 - secondsIntoCurrentRound;
-                let mins = Math.floor(timeLeft / 60);
-                let secs = timeLeft % 60;
-                display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-                body.style.backgroundColor = "#f44336"; // Rød
-                phaseHeader.innerText = "Klargjøring (30s)";
-                
-                // Pip akkurat i det vi går over til klatring (når 1 sekund gjenstår av prep)
+            if (state.isPaused) {
+                // Hvis stoppet, vis tiden som ble lagret ved stopp
+                const color = (state.phase === 'prep') ? "#f44336" : "#4caf50";
+                const header = (state.phase === 'prep') ? "Klargjøring (Stoppet)" : "Klatring (Stoppet)";
+                renderUI(state.pauseTimeLeft, header, color);
+                return;
+            }
+
+            // Hvor mange sekunder har gått siden startknappen ble trykket?
+            const elapsedSeconds = Math.floor((Date.now() - state.startTime) / 1000);
+            const totalLoopTime = 330; // 30s + 300s
+            
+            // Finn ut hvor i loopen vi er akkurat nå
+            const currentLoopSeconds = elapsedSeconds % totalLoopTime;
+            const currentRoundNumber = Math.floor(elapsedSeconds / totalLoopTime);
+
+            if (currentLoopSeconds < 30) {
+                // Vi er i klargjøring
+                const timeLeft = 30 - currentLoopSeconds;
+                state.phase = 'prep';
+                renderUI(timeLeft, "Klargjøring (30s)", "#f44336");
+
                 if (timeLeft === 1 && lastBeepRound !== currentRoundNumber + "_prep") {
                     playBeep(880, 0.5);
                     lastBeepRound = currentRoundNumber + "_prep";
                 }
             } else {
-                // KLATRING
-                const timeLeft = ROUND_DURATION - secondsIntoCurrentRound;
-                let mins = Math.floor(timeLeft / 60);
-                let secs = timeLeft % 60;
-                display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-                body.style.backgroundColor = "#4caf50"; // Grønn
-                phaseHeader.innerText = "Klatring (5 min)";
+                // Vi er i klatring
+                const timeLeft = totalLoopTime - currentLoopSeconds;
+                state.phase = 'climb';
+                renderUI(timeLeft, "Klatring (5 min)", "#4caf50");
 
-                // Pip akkurat når klatringen er ferdig (når 1 sekund gjenstår)
                 if (timeLeft === 1 && lastBeepRound !== currentRoundNumber + "_climb") {
                     playBeep(440, 1.0);
                     lastBeepRound = currentRoundNumber + "_climb";
@@ -109,9 +149,80 @@
             }
         }
 
-        // Oppdater klokkesjekken 5 ganger i sekundet så den er 100% nøyaktig
-        setInterval(updateTimer, 200);
-        updateTimer();
+        function renderUI(timeLeft, headerText, backgroundColor) {
+            let mins = Math.floor(timeLeft / 60);
+            let secs = timeLeft % 60;
+            display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            body.style.backgroundColor = backgroundColor;
+            phaseHeader.innerText = headerText;
+        }
+
+        // --- SKYSYNKRONISERING VIA EN ENKEL JSON-BØTTE (KVStore) ---
+        // Vi bruker en helt åpen, gratis lagringstjeneste som aldri blokkeres av CORS
+        const SYNC_URL = "https://kvstore.io/api/v1/climb_timer_onsite_2026";
+
+        function checkServer() {
+            fetch(SYNC_URL)
+            .then(res => res.json())
+            .then(data => {
+                if (data && data.value) {
+                    const serverState = JSON.parse(data.value);
+                    // Oppdater vår lokale klokke-oppførsel basert på det laptopen har lagret på nettet
+                    state.startTime = parseInt(serverState.startTime);
+                    state.isPaused = serverState.isPaused === true || serverState.isPaused === "true";
+                    state.pauseTimeLeft = parseInt(serverState.pauseTimeLeft);
+                    state.phase = serverState.phase;
+                }
+            })
+            .catch(e => {});
+        }
+
+        // Alle TV-er sjekker tekstfilen på nettet hvert sekund
+        setInterval(checkServer, 1000);
+        // Selve tallene teller flytende lokalt på skjermen
+        setInterval(calculateTime, 200);
+
+        // --- ADMIN-KNAPPER (Kjøres når du trykker på PC-en) ---
+        function pushStateToServer() {
+            fetch(SYNC_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ value: JSON.stringify(state) })
+            }).then(() => calculateTime());
+        }
+
+        document.getElementById('btn-start').onclick = () => {
+            if (state.isPaused) {
+                state.isPaused = false;
+                if (state.startTime === 0) {
+                    // Første start fra 00:30
+                    state.startTime = Date.now();
+                } else {
+                    // Gjenoppta etter en pause (forskyv starttidspunktet)
+                    const elapsedSoFar = (state.phase === 'prep') ? (30 - state.pauseTimeLeft) : (330 - state.pauseTimeLeft);
+                    state.startTime = Date.now() - (elapsedSoFar * 1000);
+                }
+                pushStateToServer();
+            }
+        };
+
+        document.getElementById('btn-stop').onclick = () => {
+            if (!state.isPaused && state.startTime !== 0) {
+                state.isPaused = true;
+                // Finn ut nøyaktig hvor mye tid som var igjen da vi trykket stopp
+                const elapsed = Math.floor((Date.now() - state.startTime) / 1000) % 330;
+                state.pauseTimeLeft = (elapsed < 30) ? (30 - elapsed) : (330 - elapsed);
+                pushStateToServer();
+            }
+        };
+
+        document.getElementById('btn-reset').onclick = () => {
+            state.startTime = 0;
+            state.isPaused = true;
+            state.pauseTimeLeft = 30;
+            state.phase = 'prep';
+            pushStateToServer();
+        };
     </script>
 </body>
 </html>
