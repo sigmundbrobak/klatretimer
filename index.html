@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClimbAlong - Onsite Auto-Timer (TimeSync)</title>
+    <title>ClimbAlong - Onsite Auto-Timer (WallClock)</title>
     <style>
         body {
             color: #fff;
@@ -31,30 +31,11 @@
             letter-spacing: 2px;
             margin: 0;
         }
-        #admin-panel {
-            position: fixed;
-            bottom: 30px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.85);
-            padding: 15px 25px;
-            border-radius: 12px;
-            z-index: 9999;
-            text-align: center;
-        }
-        button {
-            font-size: 20px;
-            padding: 12px 25px;
-            margin: 5px;
-            cursor: pointer;
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
-        }
         #version-tag {
-            font-size: 12px;
+            position: fixed;
+            bottom: 20px;
+            font-size: 14px;
             color: #888;
-            margin-top: 8px;
         }
     </style>
 </head>
@@ -62,24 +43,17 @@
 
     <div id="phase-header">Klargjøring (30s)</div>
     <div id="timer-display">00:30</div>
-
-    <div id="admin-panel">
-        <button id="btn-start" style="background:#4caf50; color:white">START TIMERE</button>
-        <button id="btn-reset" style="background:#ff9800; color:white">RESET ALL</button>
-        <div id="version-tag">Versjon: v0.4 (TimeSync)</div>
-    </div>
+    <div id="version-tag">Versjon: v0.5 (Autopilot)</div>
 
     <script>
-        let startTime = 0; // Tidspunktet i millisekunder da start ble trykket
-        let timerInterval = null;
-
         const body = document.body;
         const display = document.getElementById('timer-display');
         const phaseHeader = document.getElementById('phase-header');
 
         // Lydfunksjon
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        let lastBeepTime = 0;
+        let lastBeepRound = -1;
+
         function playBeep(frequency, duration) {
             try {
                 if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -93,97 +67,51 @@
             } catch(e) {}
         }
 
-        // Hovedlogikk: Regner ut nøyaktig tid basert på felles servertid
-        function calculateTime() {
-            if (startTime === 0) {
-                // Timeren er ikke startet eller er resatt
-                display.innerText = "00:30";
-                body.style.backgroundColor = "#f44336";
-                phaseHeader.innerText = "Klargjøring (30s)";
-                return;
-            }
-
-            const now = Date.now();
-            const elapsedSeconds = Math.floor((now - startTime) / 1000);
+        function updateTimer() {
+            // 1. Hent nøyaktig antall sekunder siden midnatt i dag basert på lokal klokke
+            const now = new Date();
+            const totalSecondsToday = (now.getHours() * 3600) + (now.getMinutes() * 60) + now.getSeconds();
             
-            if (elapsedSeconds < 0) {
-                display.innerText = "00:30";
-                return;
-            }
+            // 2. En hel runde varer i 330 sekunder (30s klargjøring + 300s klatring)
+            const ROUND_DURATION = 330; 
+            const currentRoundNumber = Math.floor(totalSecondsToday / ROUND_DURATION);
+            const secondsIntoCurrentRound = totalSecondsToday % ROUND_DURATION;
 
-            const totalLoopTime = 330; // 30s prep + 300s klatring = 330 sekunder totalt per runde
-            const currentLoopSeconds = elapsedSeconds % totalLoopTime;
-
-            if (currentLoopSeconds < 30) {
-                // Vi er i klargjøringsfasen (de første 30 sekundene av loopen)
-                const timeLeft = 30 - currentLoopSeconds;
+            // 3. Sjekk om vi er i klargjøring (første 30 sekunder) eller klatring (neste 300 sekunder)
+            if (secondsIntoCurrentRound < 30) {
+                // KLARGJØRING
+                const timeLeft = 30 - secondsIntoCurrentRound;
                 let mins = Math.floor(timeLeft / 60);
                 let secs = timeLeft % 60;
                 display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-                body.style.backgroundColor = "#f44336";
+                body.style.backgroundColor = "#f44336"; // Rød
                 phaseHeader.innerText = "Klargjøring (30s)";
                 
-                // Pip rett før start (på sekund 0 av den nye klatringen)
-                if (timeLeft === 1 && now - lastBeepTime > 2000) {
+                // Pip akkurat i det vi går over til klatring (når 1 sekund gjenstår av prep)
+                if (timeLeft === 1 && lastBeepRound !== currentRoundNumber + "_prep") {
                     playBeep(880, 0.5);
-                    lastBeepTime = now;
+                    lastBeepRound = currentRoundNumber + "_prep";
                 }
             } else {
-                // Vi er i klatrefasen (de neste 300 sekundene av loopen)
-                const timeLeft = 330 - currentLoopSeconds;
+                // KLATRING
+                const timeLeft = ROUND_DURATION - secondsIntoCurrentRound;
                 let mins = Math.floor(timeLeft / 60);
                 let secs = timeLeft % 60;
                 display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-                body.style.backgroundColor = "#4caf50";
+                body.style.backgroundColor = "#4caf50"; // Grønn
                 phaseHeader.innerText = "Klatring (5 min)";
 
-                // Pip når klatringen er ferdig
-                if (timeLeft === 1 && now - lastBeepTime > 2000) {
+                // Pip akkurat når klatringen er ferdig (når 1 sekund gjenstår)
+                if (timeLeft === 1 && lastBeepRound !== currentRoundNumber + "_climb") {
                     playBeep(440, 1.0);
-                    lastBeepTime = now;
+                    lastBeepRound = currentRoundNumber + "_climb";
                 }
             }
         }
 
-        // --- DIREKTE SYNKRONISERING VIA BILDETRIKS (Garantert ublokkerbart) ---
-        function checkServer() {
-            // Vi henter den lagrede start-tiden fra en helt åpen ntfy-logg (som ren JSON-tekst)
-            fetch(`https://ntfy.sh/climbalong_timesync_2026/json?poll=1&limit=1&t=` + Date.now())
-            .then(res => res.json())
-            .then(data => {
-                if (data && data.length > 0) {
-                    const msg = data[0].message;
-                    if (msg === 'reset') {
-                        startTime = 0;
-                    } else {
-                        startTime = parseInt(msg);
-                    }
-                }
-            }).catch(e => {});
-        }
-
-        // TV-ene sjekker skyen hvert sekund
-        setInterval(checkServer, 1000);
-        // UI oppdateres lynraskt lokalt på skjermen
-        setInterval(calculateTime, 200);
-
-        // --- ADMIN-KNAPPER ---
-        function sendStart() {
-            const currentServerTime = Date.now();
-            // Vi sender tidspunktet vi startet til skyen via et ublokkerbart bilde-kall
-            const img = new Image();
-            img.src = `https://ntfy.sh/climbalong_timesync_2026/publish?message=${currentServerTime}&t=${Date.now()}`;
-            startTime = currentServerTime;
-        }
-
-        function sendReset() {
-            const img = new Image();
-            img.src = `https://ntfy.sh/climbalong_timesync_2026/publish?message=reset&t=${Date.now()}`;
-            startTime = 0;
-        }
-
-        document.getElementById('btn-start').onclick = () => sendStart();
-        document.getElementById('btn-reset').onclick = () => sendReset();
+        // Oppdater klokkesjekken 5 ganger i sekundet så den er 100% nøyaktig
+        setInterval(updateTimer, 200);
+        updateTimer();
     </script>
 </body>
 </html>
