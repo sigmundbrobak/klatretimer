@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClimbAlong - Onsite Auto-Timer (LAN-Sync)</title>
+    <title>ClimbAlong - Screenpublishing-Timer</title>
     <style>
         body {
             color: #fff;
@@ -15,7 +15,7 @@
             height: 100vh;
             margin: 0;
             overflow: hidden;
-            background-color: #f44336;
+            background-color: #333;
             transition: background-color 0.2s ease;
         }
         #timer-display {
@@ -31,157 +31,73 @@
             letter-spacing: 2px;
             margin: 0;
         }
-        #admin-panel {
-            position: fixed;
-            bottom: 30px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.85);
-            padding: 15px 25px;
-            border-radius: 12px;
-            z-index: 9999;
-            text-align: center;
-        }
-        button {
-            font-size: 20px;
-            padding: 12px 25px;
-            margin: 5px;
-            cursor: pointer;
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
-        }
         #version-tag {
-            font-size: 12px;
-            color: #888;
-            margin-top: 8px;
+            position: fixed;
+            bottom: 15px;
+            font-size: 14px;
+            color: rgba(255,255,255,0.3);
         }
     </style>
 </head>
 <body>
 
-    <div id="phase-header">Klargjøring (30s)</div>
+    <div id="phase-header">KLAR</div>
     <div id="timer-display">00:30</div>
-
-    <div id="admin-panel">
-        <button id="btn-start" style="background:#4caf50; color:white">START NESTE MINUTT</button>
-        <button id="btn-stop" style="background:#e91e63; color:white">STOPP / FRYS</button>
-        <button id="btn-reset" style="background:#ff9800; color:white">RESET (00:30)</button>
-        <div id="version-tag">Versjon: v0.7 (LAN-Sync)</div>
-    </div>
+    <div id="version-tag">Versjon: v0.8 (Screenpublishing-Native)</div>
 
     <script>
-        // Starttidspunkt må settes til et fast minutt i fremtiden som alle enheter kan regne ut
-        let syncTargetMinute = localStorage.getItem('climb_sync_target') ? parseInt(localStorage.getItem('climb_sync_target')) : 0;
-        let isPaused = localStorage.getItem('climb_paused') === 'true';
-        let pauseTimeLeft = localStorage.getItem('climb_pause_left') ? parseInt(localStorage.getItem('climb_pause_left')) : 30;
-        let pausedPhase = localStorage.getItem('climb_paused_phase') ? localStorage.getItem('climb_paused_phase') : 'prep';
-
         const body = document.body;
         const display = document.getElementById('timer-display');
         const phaseHeader = document.getElementById('phase-header');
 
-        // Lytt på lokale endringer (hvis du tester to vinduer på samme PC)
-        window.addEventListener('storage', () => {
-            syncTargetMinute = parseInt(localStorage.getItem('climb_sync_target') || 0);
-            isPaused = localStorage.getItem('climb_paused') === 'true';
-            pauseTimeLeft = parseInt(localStorage.getItem('climb_pause_left') || 30);
-            pausedPhase = localStorage.getItem('climb_paused_phase') || 'prep';
-        });
+        let timeLeft = 30;
+        let phase = 'prep';
+        let timerInterval = null;
 
-        function calculateTime() {
-            if (syncTargetMinute === 0) {
-                renderUI(30, "Klargjøring (Klar)", "#f44336");
-                return;
-            }
+        // Sjekk hva URL-en slutter på (?status=...)
+        const urlParams = new URLSearchParams(window.location.search);
+        const status = urlParams.get('status');
 
-            if (isPaused) {
-                const color = (pausedPhase === 'prep') ? "#f44336" : "#4caf50";
-                const header = (pausedPhase === 'prep') ? "Klargjøring (Stoppet)" : "Klatring (Stoppet)";
-                renderUI(pauseTimeLeft, header, color);
-                return;
-            }
+        if (status === 'start') {
+            // Hvis URL-en slutter på ?status=start, starter nedtellingen automatisk med en gang siden lastes inn!
+            phase = 'prep';
+            timeLeft = 30;
+            body.style.backgroundColor = "#f44336"; // Rød
+            phaseHeader.innerText = "Klargjøring (30s)";
+            
+            timerInterval = setInterval(() => {
+                if (timeLeft > 0) {
+                    timeLeft--;
+                    let mins = Math.floor(timeLeft / 60);
+                    let secs = timeLeft % 60;
+                    display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                } else {
+                    if (phase === 'prep') {
+                        phase = 'climb';
+                        timeLeft = 300; // 5 minutter klatring
+                        body.style.backgroundColor = "#4caf50"; // Grønn
+                        phaseHeader.innerText = "Klatring (5 min)";
+                    } else {
+                        // Automatisk loop: Tilbake til klargjøring
+                        phase = 'prep';
+                        timeLeft = 30;
+                        body.style.backgroundColor = "#f44336";
+                        phaseHeader.innerText = "Klargjøring (30s)";
+                    }
+                }
+            }, 1000);
 
-            const now = new Date();
-            // Tid i sekunder siden måltidspunktet (syncTargetMinute)
-            const elapsedSeconds = Math.floor((now.getTime() - syncTargetMinute) / 1000);
-
-            if (elapsedSeconds < 0) {
-                // Timeren venter på at det valgte minuttet skal starte
-                const secsToStart = Math.abs(elapsedSeconds);
-                renderUI(30, `Starter om ${secsToStart}s...`, "#666");
-                return;
-            }
-
-            const totalLoopTime = 330; // 30s prep + 300s klatring
-            const currentLoopSeconds = elapsedSeconds % totalLoopTime;
-
-            if (currentLoopSeconds < 30) {
-                const timeLeft = 30 - currentLoopSeconds;
-                renderUI(timeLeft, "Klargjøring (30s)", "#f44336");
-            } else {
-                const timeLeft = totalLoopTime - currentLoopSeconds;
-                renderUI(timeLeft, "Klatring (5 min)", "#4caf50");
-            }
+        } else if (status === 'stopp') {
+            // Vis en frossen rød skjerm på 00:30 (Pause/Stopp)
+            body.style.backgroundColor = "#f44336";
+            phaseHeader.innerText = "Klargjøring (Stoppet)";
+            display.innerText = "00:30";
+        } else {
+            // Standardvisning hvis man bare åpner siden vanlig
+            body.style.backgroundColor = "#555";
+            phaseHeader.innerText = "KLAR TIL START";
+            display.innerText = "00:30";
         }
-
-        function renderUI(timeLeft, headerText, backgroundColor) {
-            let mins = Math.floor(timeLeft / 60);
-            let secs = timeLeft % 60;
-            display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-            body.style.backgroundColor = backgroundColor;
-            phaseHeader.innerText = headerText;
-        }
-
-        // Oppdater klokkesjekken kontinuerlig
-        setInterval(calculateTime, 200);
-
-        // --- MANUELL STYRING ---
-        document.getElementById('btn-start').onclick = () => {
-            const now = new Date();
-            // Vi setter starttidspunktet til nøyaktig 5 sekunder inn i fremtiden, 
-            // slik at du har tid til å se at sekundene teller ned til felles start!
-            const startTime = now.getTime() + 5000; 
-            
-            localStorage.setItem('climb_sync_target', startTime);
-            localStorage.setItem('climb_paused', 'false');
-            
-            syncTargetMinute = startTime;
-            isPaused = false;
-            
-            alert(`Timeren er synkronisert og starter om 5 sekunder på ALLE skjermer!`);
-        };
-
-        document.getElementById('btn-stop').onclick = () => {
-            if (syncTargetMinute !== 0 && !isPaused) {
-                const now = new Date();
-                const elapsed = Math.floor((now.getTime() - syncTargetMinute) / 1000) % 330;
-                const currentLeft = (elapsed < 30) ? (30 - elapsed) : (330 - elapsed);
-                const currentPhase = (elapsed < 30) ? 'prep' : 'climb';
-
-                localStorage.setItem('climb_paused', 'true');
-                localStorage.setItem('climb_pause_left', currentLeft);
-                localStorage.setItem('climb_paused_phase', currentPhase);
-                
-                isPaused = true;
-                pauseTimeLeft = currentLeft;
-                pausedPhase = currentPhase;
-            }
-        };
-
-        document.getElementById('btn-reset').onclick = () => {
-            localStorage.setItem('climb_sync_target', 0);
-            localStorage.setItem('climb_paused', 'true');
-            localStorage.setItem('climb_pause_left', 30);
-            localStorage.setItem('climb_paused_phase', 'prep');
-            
-            syncTargetMinute = 0;
-            isPaused = true;
-            pauseTimeLeft = 30;
-            pausedPhase = 'prep';
-        };
-
-        calculateTime();
     </script>
 </body>
 </html>
