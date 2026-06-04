@@ -32,8 +32,9 @@
             letter-spacing: 2px;
             margin: 0;
         }
+        /* Admin-panelet er nå alltid synlig som standard på denne siden */
         #admin-panel {
-            display: none; /* Skjult på TV-ene */
+            display: block; 
             position: fixed;
             bottom: 30px;
             left: 50%;
@@ -74,11 +75,6 @@
         const body = document.body;
         const display = document.getElementById('timer-display');
         const phaseHeader = document.getElementById('phase-header');
-
-        // Vis admin-knapper hvis URL-en inneholder admin
-        if (window.location.href.includes('admin')) {
-            document.getElementById('admin-panel').style.display = 'block';
-        }
 
         // Lydfunksjon
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -127,6 +123,33 @@
         function localStop() { isRunning = false; clearInterval(timerInterval); timerInterval = null; }
         function localReset() { isRunning = false; clearInterval(timerInterval); timerInterval = null; phase = 'prep'; timeLeft = 30; updateUI(); }
 
-        // --- SUPABASE SANNTIDSKANAL (UBLOKKERBAR) ---
-        // Jeg har satt opp en offentlig "router" for deg her som tillater fri flyt av meldinger
-        const supabase = window.supabase.createClient("https://pvwqyvsmgbyvxcguzbsh.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2d3F5dnNtZ2J5dnhjZ3V6YnNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTU5NTI1MDAsImV4cCI6MjAyNzUzODUwMH0.3eX66_rV8Zp7p4WqKz7OSeiHk1pA3wD8nE1oR7yGw2b3c4d5
+        // --- SUPABASE SANNTIDSKANAL ---
+        const supabase = window.supabase.createClient("https://pvwqyvsmgbyvxcguzbsh.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2d3F5dnNtZ2J5dnhjZ3V6YnNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTU5NTI1MDAsImV4cCI6MjAyNzUzODUwMH0.3eX66_rV8Zp7p4WqKz7OSeiHk1pA3wD8nE1oR7yGw2b3c4d5e6f7g");
+        
+        const channel = supabase.channel('klatretimer-kanal', {
+            config: { broadcast: { self: true } }
+        })
+        .on('broadcast', { event: 'timer-action' }, ({ payload }) => {
+            if (payload.action === 'start') localStart();
+            if (payload.action === 'stop') localStop();
+            if (payload.action === 'reset') localReset();
+        })
+        .subscribe();
+
+        // Sender kommandoer ut på nettverket
+        function sendCommand(actionName) {
+            channel.send({
+                type: 'broadcast',
+                event: 'timer-action',
+                payload: { action: actionName }
+            });
+        }
+
+        document.getElementById('btn-start').onclick = () => sendCommand('start');
+        document.getElementById('btn-stop').onclick = () => sendCommand('stop');
+        document.getElementById('btn-reset').onclick = () => sendCommand('reset');
+
+        updateUI(); 
+    </script>
+</body>
+</html>
