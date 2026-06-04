@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClimbAlong - Onsite Auto-Timer</title>
+    <style>
+        body {
+            color: #fff;
+            font-family: 'Arial', sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            background-color: #f44336; /* Rød standard */
+            transition: background-color 0.2s ease;
+        }
+        #timer-display {
+            font-size: 35vw;
+            font-weight: bold;
+            font-variant-numeric: tabular-nums;
+            line-height: 0.8;
+            margin: 0;
+        }
+        #phase-header {
+            font-size: 6vw;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin: 0;
+        }
+        #admin-panel {
+            display: none; /* Skjult på TV-ene */
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.9);
+            padding: 20px;
+            border-radius: 12px;
+            z-index: 9999;
+        }
+        button {
+            font-size: 24px;
+            padding: 15px 35px;
+            margin: 0 10px;
+            cursor: pointer;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="phase-header">Klargjøring (30s)</div>
+    <div id="timer-display">00:30</div>
+
+    <div id="admin-panel">
+        <button id="btn-start" style="background:#4caf50; color:white">START</button>
+        <button id="btn-stop" style="background:#2196f3; color:white">STOPP</button>
+        <button id="btn-reset" style="background:#ff9800; color:white">RESET</button>
+    </div>
+
+    <script>
+        let timeLeft = 30; 
+        let phase = 'prep'; 
+        let isRunning = false;
+        let timerInterval = null;
+        let lastCommandId = ""; 
+
+        const body = document.body;
+        const display = document.getElementById('timer-display');
+        const phaseHeader = document.getElementById('phase-header');
+
+        // Vis admin-knapper hvis URL-en inneholder admin
+        if (window.location.href.includes('admin')) {
+            document.getElementById('admin-panel').style.display = 'block';
+        }
+
+        // Lydfunksjon
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playBeep(frequency, duration) {
+            try {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const oscillator = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime); 
+                gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                oscillator.connect(gain); gain.connect(audioCtx.destination);
+                oscillator.start(); oscillator.stop(audioCtx.currentTime + duration);
+            } catch(e) {}
+        }
+
+        function updateUI() {
+            let mins = Math.floor(timeLeft / 60);
+            let secs = timeLeft % 60;
+            display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            body.style.backgroundColor = (phase === 'prep') ? "#f44336" : "#4caf50";
+            phaseHeader.innerText = (phase === 'prep') ? "Klargjøring (30s)" : "Klatring (5 min)";
+        }
+
+        function tick() {
+            if (!isRunning) return;
+            if (timeLeft > 0) {
+                timeLeft--; 
+                updateUI();
+            } else {
+                if (phase === 'prep') {
+                    // Ferdig med 30s klargjøring -> Gå til 5 min klatring
+                    playBeep(880, 0.5); 
+                    phase = 'climb'; 
+                    timeLeft = 300; 
+                } else {
+                    // NYTT: Ferdig med 5 min klatring -> Start automatisk på nytt med klargjøring!
+                    playBeep(440, 1.0); 
+                    phase = 'prep'; 
+                    timeLeft = 30; 
+                }
+                updateUI();
+            }
+        }
+
+        function localStart() { isRunning = true; if (!timerInterval) timerInterval = setInterval(tick, 1000); }
+        function localStop() { isRunning = false; clearInterval(timerInterval); timerInterval = null; }
+        function localReset() { isRunning = false; clearInterval(timerInterval); timerInterval = null; phase = 'prep'; timeLeft = 30; updateUI(); }
+
+        // --- POLING: Sjekker skyen for signaler ---
+        function checkServer() {
+            fetch(`https://ntfy.sh/climbalong_timer_onsite_2026/json?poll=1&limit=1`)
+            .then(res => res.json())
+            .then(data => {
+                if (data && data.length > 0) {
+                    const msg = data[0];
+                    if (msg.id !== lastCommandId) {
+                        lastCommandId = msg.id;
+                        if (msg.message === 'start') localStart();
+                        if (msg.message === 'stop') localStop();
+                        if (msg.message === 'reset') localReset();
+                    }
+                }
+            }).catch(e => {});
+        }
+
+        setInterval(checkServer, 1000);
+
+        // --- SENDING ---
+        function sendCommand(actionName) {
+            fetch(`https://ntfy.sh/climbalong_timer_onsite_2026`, {
+                method: 'POST',
+                body: actionName
+            }).then(() => {
+                checkServer(); 
+            });
+        }
+
+        document.getElementById('btn-start').onclick = () => sendCommand('start');
+        document.getElementById('btn-stop').onclick = () => sendCommand('stop');
+        document.getElementById('btn-reset').onclick = () => sendCommand('reset');
+
+        updateUI(); 
+    </script>
+</body>
+</html>
