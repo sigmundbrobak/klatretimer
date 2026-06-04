@@ -110,12 +110,10 @@
                 updateUI();
             } else {
                 if (phase === 'prep') {
-                    // Ferdig med 30s klargjøring -> Gå til 5 min klatring
                     playBeep(880, 0.5); 
                     phase = 'climb'; 
                     timeLeft = 300; 
                 } else {
-                    // NYTT: Ferdig med 5 min klatring -> Start automatisk på nytt med klargjøring!
                     playBeep(440, 1.0); 
                     phase = 'prep'; 
                     timeLeft = 30; 
@@ -128,7 +126,7 @@
         function localStop() { isRunning = false; clearInterval(timerInterval); timerInterval = null; }
         function localReset() { isRunning = false; clearInterval(timerInterval); timerInterval = null; phase = 'prep'; timeLeft = 30; updateUI(); }
 
-        // --- POLING: Sjekker skyen for signaler ---
+        // --- POLING: Henter signaler fra skyen ---
         function checkServer() {
             fetch(`https://ntfy.sh/climbalong_timer_onsite_2026/json?poll=1&limit=1`)
             .then(res => res.json())
@@ -145,16 +143,20 @@
             }).catch(e => {});
         }
 
+        // Sjekk skyen hvert sekund
         setInterval(checkServer, 1000);
 
-        // --- SENDING ---
+        // --- SENDING MED RIGTIG FORMAT (TEXT/PLAIN) ---
         function sendCommand(actionName) {
             fetch(`https://ntfy.sh/climbalong_timer_onsite_2026`, {
                 method: 'POST',
+                headers: {
+                    'Content-Type': 'text/plain' // Tvinger nettleseren til å sende ren tekst (fikser CORS-trøbbel!)
+                },
                 body: actionName
             }).then(() => {
-                checkServer(); 
-            });
+                checkServer(); // Oppdater lokalt med en gang
+            }).catch(e => console.error("Feil ved sending:", e));
         }
 
         document.getElementById('btn-start').onclick = () => sendCommand('start');
