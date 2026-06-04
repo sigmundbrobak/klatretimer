@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClimbAlong - Onsite Auto-Timer (P2P)</title>
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <title>ClimbAlong - Onsite Auto-Timer (TimeSync)</title>
     <style>
         body {
             color: #fff;
@@ -42,7 +41,6 @@
             border-radius: 12px;
             z-index: 9999;
             text-align: center;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         }
         button {
             font-size: 20px;
@@ -51,21 +49,6 @@
             cursor: pointer;
             border: none;
             border-radius: 6px;
-            font-weight: bold;
-        }
-        input {
-            font-size: 16px;
-            padding: 10px;
-            border-radius: 6px;
-            border: none;
-            margin-right: 5px;
-            width: 150px;
-            text-align: center;
-        }
-        #p2p-info {
-            font-size: 14px;
-            color: #1cf;
-            margin-bottom: 8px;
             font-weight: bold;
         }
         #version-tag {
@@ -81,37 +64,22 @@
     <div id="timer-display">00:30</div>
 
     <div id="admin-panel">
-        <div id="p2p-info">Genererer din skjerm-ID...</div>
-        
-        <div id="connect-row" style="margin-bottom: 10px;">
-            <input type="text" id="peer-id-input" placeholder="Tast inn TV-ens ID">
-            <button id="btn-connect" style="background:#2196f3; color:white; font-size:16px; padding:10px 15px;">Koble til TV</button>
-        </div>
-
-        <button id="btn-start" style="background:#4caf50; color:white">START</button>
-        <button id="btn-stop" style="background:#e91e63; color:white">STOPP</button>
-        <button id="btn-reset" style="background:#ff9800; color:white">RESET</button>
-        
-        <div id="version-tag">Versjon: v0.3 (P2P-Tunnel)</div>
+        <button id="btn-start" style="background:#4caf50; color:white">START TIMERE</button>
+        <button id="btn-reset" style="background:#ff9800; color:white">RESET ALL</button>
+        <div id="version-tag">Versjon: v0.4 (TimeSync)</div>
     </div>
 
     <script>
-        let timeLeft = 30; 
-        let phase = 'prep'; 
-        let isRunning = false;
+        let startTime = 0; // Tidspunktet i millisekunder da start ble trykket
         let timerInterval = null;
-        
-        // P2P Variabler
-        let peer = null;
-        let conn = null;
 
         const body = document.body;
         const display = document.getElementById('timer-display');
         const phaseHeader = document.getElementById('phase-header');
-        const p2pInfo = document.getElementById('p2p-info');
 
         // Lydfunksjon
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let lastBeepTime = 0;
         function playBeep(frequency, duration) {
             try {
                 if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -125,96 +93,97 @@
             } catch(e) {}
         }
 
-        function updateUI() {
-            let mins = Math.floor(timeLeft / 60);
-            let secs = timeLeft % 60;
-            display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-            body.style.backgroundColor = (phase === 'prep') ? "#f44336" : "#4caf50";
-            phaseHeader.innerText = (phase === 'prep') ? "Klargjøring (30s)" : "Klatring (5 min)";
-        }
+        // Hovedlogikk: Regner ut nøyaktig tid basert på felles servertid
+        function calculateTime() {
+            if (startTime === 0) {
+                // Timeren er ikke startet eller er resatt
+                display.innerText = "00:30";
+                body.style.backgroundColor = "#f44336";
+                phaseHeader.innerText = "Klargjøring (30s)";
+                return;
+            }
 
-        function tick() {
-            if (!isRunning) return;
-            if (timeLeft > 0) {
-                timeLeft--; 
-                updateUI();
-            } else {
-                if (phase === 'prep') {
-                    playBeep(880, 0.5); 
-                    phase = 'climb'; timeLeft = 300; 
-                } else {
-                    playBeep(440, 1.0); 
-                    phase = 'prep'; timeLeft = 30; 
+            const now = Date.now();
+            const elapsedSeconds = Math.floor((now - startTime) / 1000);
+            
+            if (elapsedSeconds < 0) {
+                display.innerText = "00:30";
+                return;
+            }
+
+            const totalLoopTime = 330; // 30s prep + 300s klatring = 330 sekunder totalt per runde
+            const currentLoopSeconds = elapsedSeconds % totalLoopTime;
+
+            if (currentLoopSeconds < 30) {
+                // Vi er i klargjøringsfasen (de første 30 sekundene av loopen)
+                const timeLeft = 30 - currentLoopSeconds;
+                let mins = Math.floor(timeLeft / 60);
+                let secs = timeLeft % 60;
+                display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                body.style.backgroundColor = "#f44336";
+                phaseHeader.innerText = "Klargjøring (30s)";
+                
+                // Pip rett før start (på sekund 0 av den nye klatringen)
+                if (timeLeft === 1 && now - lastBeepTime > 2000) {
+                    playBeep(880, 0.5);
+                    lastBeepTime = now;
                 }
-                updateUI();
+            } else {
+                // Vi er i klatrefasen (de neste 300 sekundene av loopen)
+                const timeLeft = 330 - currentLoopSeconds;
+                let mins = Math.floor(timeLeft / 60);
+                let secs = timeLeft % 60;
+                display.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                body.style.backgroundColor = "#4caf50";
+                phaseHeader.innerText = "Klatring (5 min)";
+
+                // Pip når klatringen er ferdig
+                if (timeLeft === 1 && now - lastBeepTime > 2000) {
+                    playBeep(440, 1.0);
+                    lastBeepTime = now;
+                }
             }
         }
 
-        function localStart() { isRunning = true; if (!timerInterval) timerInterval = setInterval(tick, 1000); }
-        function localStop() { isRunning = false; clearInterval(timerInterval); timerInterval = null; }
-        function localReset() { isRunning = false; clearInterval(timerInterval); timerInterval = null; phase = 'prep'; timeLeft = 30; updateUI(); }
-
-        // --- OPPSETT AV DIREKTE P2P-TUNNEL ---
-        // Generer en tilfeldig ID for denne spesifikke skjermen mellom 100 og 999
-        const myId = "klatre-" + Math.floor(100 + Math.random() * 900);
-        
-        peer = new Peer(myId);
-
-        peer.on('open', (id) => {
-            p2pInfo.innerText = "Denne skjermens ID: " + id;
-        });
-
-        // Hva skjer når denne enheten (f.eks TV-en) mottar en tilkobling fra kontroll-PC?
-        peer.on('connection', (incomingConn) => {
-            conn = incomingConn;
-            setupDataListener();
-            p2pInfo.innerText = "Status: Fjernstyrt av PC! 🟢";
-            document.getElementById('connect-row').style.display = 'none'; // Gjem koblingsfeltet på TV-en
-        });
-
-        // Lytt etter start/stopp-ordrer gjennom tunnelen
-        function setupDataListener() {
-            conn.on('data', (data) => {
-                if (data === 'start') localStart();
-                if (data === 'stop') localStop();
-                if (data === 'reset') localReset();
-            });
-            conn.on('close', () => {
-                p2pInfo.innerText = "Mistet kobling. ID: " + myId;
-            });
+        // --- DIREKTE SYNKRONISERING VIA BILDETRIKS (Garantert ublokkerbart) ---
+        function checkServer() {
+            // Vi henter den lagrede start-tiden fra en helt åpen ntfy-logg (som ren JSON-tekst)
+            fetch(`https://ntfy.sh/climbalong_timesync_2026/json?poll=1&limit=1&t=` + Date.now())
+            .then(res => res.json())
+            .then(data => {
+                if (data && data.length > 0) {
+                    const msg = data[0].message;
+                    if (msg === 'reset') {
+                        startTime = 0;
+                    } else {
+                        startTime = parseInt(msg);
+                    }
+                }
+            }).catch(e => {});
         }
 
-        // Knapp: Koble fra kontroll-PC til TV-skjermen
-        document.getElementById('btn-connect').onclick = () => {
-            const targetId = document.getElementById('peer-id-input').value.trim();
-            if (targetId) {
-                p2pInfo.innerText = "Kobler til " + targetId + "...";
-                conn = peer.connect(targetId);
-                
-                conn.on('open', () => {
-                    p2pInfo.innerText = "Tilkoblet TV! Du styrer nå storskjermen. 🚀";
-                });
-                
-                setupDataListener();
-            }
-        };
+        // TV-ene sjekker skyen hvert sekund
+        setInterval(checkServer, 1000);
+        // UI oppdateres lynraskt lokalt på skjermen
+        setInterval(calculateTime, 200);
 
-        // Send kommando gjennom tunnelen, OG kjør lokalt
-        function sendCommand(actionName) {
-            if (actionName === 'start') localStart();
-            if (actionName === 'stop') localStop();
-            if (actionName === 'reset') localReset();
-
-            if (conn && conn.open) {
-                conn.send(actionName);
-            }
+        // --- ADMIN-KNAPPER ---
+        function sendStart() {
+            const currentServerTime = Date.now();
+            // Vi sender tidspunktet vi startet til skyen via et ublokkerbart bilde-kall
+            const img = new Image();
+            img.src = `https://ntfy.sh/climbalong_timesync_2026/publish?message=${currentServerTime}&t=${Date.now()}`;
+            startTime = currentServerTime;
         }
 
-        document.getElementById('btn-start').onclick = () => sendCommand('start');
-        document.getElementById('btn-stop').onclick = () => sendCommand('stop');
-        document.getElementById('btn-reset').onclick = () => sendCommand('reset');
+        function sendReset() {
+            const img = new Image();
+            img.src = `https://ntfy.sh/climbalong_timesync_2026/publish?message=reset&t=${Date.now()}`;
+            startTime = 0;
+        }
 
-        updateUI(); 
+        document.getElementById('btn-start').onclick = () => sendStart();
+        document.getElementById('btn-reset').onclick = () => sendReset();
     </script>
 </body>
 </html>
