@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClimbAlong - Onsite Auto-Timer (PieSocket)</title>
+    <title>ClimbAlong - Onsite Auto-Timer (P2P)</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         body {
             color: #fff;
@@ -15,7 +16,7 @@
             height: 100vh;
             margin: 0;
             overflow: hidden;
-            background-color: #f44336; /* Rød standard */
+            background-color: #f44336;
             transition: background-color 0.2s ease;
         }
         #timer-display {
@@ -36,26 +37,41 @@
             bottom: 30px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0,0,0,0.8);
-            padding: 20px;
+            background: rgba(0,0,0,0.85);
+            padding: 15px 25px;
             border-radius: 12px;
             z-index: 9999;
             text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         }
         button {
-            font-size: 24px;
-            padding: 15px 35px;
-            margin: 0 10px;
+            font-size: 20px;
+            padding: 12px 25px;
+            margin: 5px;
             cursor: pointer;
             border: none;
             border-radius: 6px;
             font-weight: bold;
         }
-        #version-tag {
+        input {
+            font-size: 16px;
+            padding: 10px;
+            border-radius: 6px;
+            border: none;
+            margin-right: 5px;
+            width: 150px;
+            text-align: center;
+        }
+        #p2p-info {
             font-size: 14px;
-            color: #aaa;
-            margin-top: 10px;
-            display: block;
+            color: #1cf;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        #version-tag {
+            font-size: 12px;
+            color: #888;
+            margin-top: 8px;
         }
     </style>
 </head>
@@ -65,10 +81,18 @@
     <div id="timer-display">00:30</div>
 
     <div id="admin-panel">
+        <div id="p2p-info">Genererer din skjerm-ID...</div>
+        
+        <div id="connect-row" style="margin-bottom: 10px;">
+            <input type="text" id="peer-id-input" placeholder="Tast inn TV-ens ID">
+            <button id="btn-connect" style="background:#2196f3; color:white; font-size:16px; padding:10px 15px;">Koble til TV</button>
+        </div>
+
         <button id="btn-start" style="background:#4caf50; color:white">START</button>
-        <button id="btn-stop" style="background:#2196f3; color:white">STOPP</button>
+        <button id="btn-stop" style="background:#e91e63; color:white">STOPP</button>
         <button id="btn-reset" style="background:#ff9800; color:white">RESET</button>
-        <div id="version-tag">Versjon: v0.2</div>
+        
+        <div id="version-tag">Versjon: v0.3 (P2P-Tunnel)</div>
     </div>
 
     <script>
@@ -76,11 +100,15 @@
         let phase = 'prep'; 
         let isRunning = false;
         let timerInterval = null;
-        let ws = null;
+        
+        // P2P Variabler
+        let peer = null;
+        let conn = null;
 
         const body = document.body;
         const display = document.getElementById('timer-display');
         const phaseHeader = document.getElementById('phase-header');
+        const p2pInfo = document.getElementById('p2p-info');
 
         // Lydfunksjon
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -113,12 +141,10 @@
             } else {
                 if (phase === 'prep') {
                     playBeep(880, 0.5); 
-                    phase = 'climb'; 
-                    timeLeft = 300; 
+                    phase = 'climb'; timeLeft = 300; 
                 } else {
                     playBeep(440, 1.0); 
-                    phase = 'prep'; 
-                    timeLeft = 30; 
+                    phase = 'prep'; timeLeft = 30; 
                 }
                 updateUI();
             }
@@ -128,37 +154,59 @@
         function localStop() { isRunning = false; clearInterval(timerInterval); timerInterval = null; }
         function localReset() { isRunning = false; clearInterval(timerInterval); timerInterval = null; phase = 'prep'; timeLeft = 30; updateUI(); }
 
-        // --- SKUDDSIKKER WEBSOCKET-TUNNEL (PieSocket) ---
-        // Denne oppretter en direkte linje mellom nettleserne dine uten omveier
-        function connectWebSocket() {
-            ws = new WebSocket("wss://demo.piesocket.com/v3/klatretimer_channel_2026?api_key=o7ee7ndv6McY9LkQAUnWS96fK89vH4bSAs3UctmX&notify_self=1");
+        // --- OPPSETT AV DIREKTE P2P-TUNNEL ---
+        // Generer en tilfeldig ID for denne spesifikke skjermen mellom 100 og 999
+        const myId = "klatre-" + Math.floor(100 + Math.random() * 900);
+        
+        peer = new Peer(myId);
 
-            ws.onmessage = function(event) {
-                try {
-                    const data = JSON.parse(event.data);
-                    if (data.action === 'start') localStart();
-                    if (data.action === 'stop') localStop();
-                    if (data.action === 'reset') localReset();
-                } catch(e) {}
-            };
+        peer.on('open', (id) => {
+            p2pInfo.innerText = "Denne skjermens ID: " + id;
+        });
 
-            // Hvis linjen faller ut, kobler den seg automatisk på igjen
-            ws.onclose = function() {
-                setTimeout(connectWebSocket, 2000);
-            };
+        // Hva skjer når denne enheten (f.eks TV-en) mottar en tilkobling fra kontroll-PC?
+        peer.on('connection', (incomingConn) => {
+            conn = incomingConn;
+            setupDataListener();
+            p2pInfo.innerText = "Status: Fjernstyrt av PC! 🟢";
+            document.getElementById('connect-row').style.display = 'none'; // Gjem koblingsfeltet på TV-en
+        });
+
+        // Lytt etter start/stopp-ordrer gjennom tunnelen
+        function setupDataListener() {
+            conn.on('data', (data) => {
+                if (data === 'start') localStart();
+                if (data === 'stop') localStop();
+                if (data === 'reset') localReset();
+            });
+            conn.on('close', () => {
+                p2pInfo.innerText = "Mistet kobling. ID: " + myId;
+            });
         }
 
-        connectWebSocket();
+        // Knapp: Koble fra kontroll-PC til TV-skjermen
+        document.getElementById('btn-connect').onclick = () => {
+            const targetId = document.getElementById('peer-id-input').value.trim();
+            if (targetId) {
+                p2pInfo.innerText = "Kobler til " + targetId + "...";
+                conn = peer.connect(targetId);
+                
+                conn.on('open', () => {
+                    p2pInfo.innerText = "Tilkoblet TV! Du styrer nå storskjermen. 🚀";
+                });
+                
+                setupDataListener();
+            }
+        };
 
-        // Sender kommandoen direkte inn i WebSocket-tunnelen
+        // Send kommando gjennom tunnelen, OG kjør lokalt
         function sendCommand(actionName) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ action: actionName }));
-            } else {
-                // Kriseløsning: Hvis nettet er nede, kjør i hvert fall lokalt
-                if (actionName === 'start') localStart();
-                if (actionName === 'stop') localStop();
-                if (actionName === 'reset') localReset();
+            if (actionName === 'start') localStart();
+            if (actionName === 'stop') localStop();
+            if (actionName === 'reset') localReset();
+
+            if (conn && conn.open) {
+                conn.send(actionName);
             }
         }
 
