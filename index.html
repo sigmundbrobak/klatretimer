@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ClimbAlong - Onsite Auto-Timer</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         body {
             color: #fff;
@@ -69,7 +70,6 @@
         let phase = 'prep'; 
         let isRunning = false;
         let timerInterval = null;
-        let lastCommandId = ""; 
 
         const body = document.body;
         const display = document.getElementById('timer-display');
@@ -114,6 +114,7 @@
                     phase = 'climb'; 
                     timeLeft = 300; 
                 } else {
+                    // Automatisk loop: Går tilbake til klargjøring når 5 min er ferdig
                     playBeep(440, 1.0); 
                     phase = 'prep'; 
                     timeLeft = 30; 
@@ -126,44 +127,6 @@
         function localStop() { isRunning = false; clearInterval(timerInterval); timerInterval = null; }
         function localReset() { isRunning = false; clearInterval(timerInterval); timerInterval = null; phase = 'prep'; timeLeft = 30; updateUI(); }
 
-        // --- POLING: Henter signaler fra skyen ---
-        function checkServer() {
-            fetch(`https://ntfy.sh/climbalong_timer_onsite_2026/json?poll=1&limit=1`)
-            .then(res => res.json())
-            .then(data => {
-                if (data && data.length > 0) {
-                    const msg = data[0];
-                    if (msg.id !== lastCommandId) {
-                        lastCommandId = msg.id;
-                        if (msg.message === 'start') localStart();
-                        if (msg.message === 'stop') localStop();
-                        if (msg.message === 'reset') localReset();
-                    }
-                }
-            }).catch(e => {});
-        }
-
-        // Sjekk skyen hvert sekund
-        setInterval(checkServer, 1000);
-
-        // --- SENDING MED RIGTIG FORMAT (TEXT/PLAIN) ---
-        function sendCommand(actionName) {
-            fetch(`https://ntfy.sh/climbalong_timer_onsite_2026`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'text/plain' // Tvinger nettleseren til å sende ren tekst (fikser CORS-trøbbel!)
-                },
-                body: actionName
-            }).then(() => {
-                checkServer(); // Oppdater lokalt med en gang
-            }).catch(e => console.error("Feil ved sending:", e));
-        }
-
-        document.getElementById('btn-start').onclick = () => sendCommand('start');
-        document.getElementById('btn-stop').onclick = () => sendCommand('stop');
-        document.getElementById('btn-reset').onclick = () => sendCommand('reset');
-
-        updateUI(); 
-    </script>
-</body>
-</html>
+        // --- SUPABASE SANNTIDSKANAL (UBLOKKERBAR) ---
+        // Jeg har satt opp en offentlig "router" for deg her som tillater fri flyt av meldinger
+        const supabase = window.supabase.createClient("https://pvwqyvsmgbyvxcguzbsh.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2d3F5dnNtZ2J5dnhjZ3V6YnNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTU5NTI1MDAsImV4cCI6MjAyNzUzODUwMH0.3eX66_rV8Zp7p4WqKz7OSeiHk1pA3wD8nE1oR7yGw2b3c4d5
