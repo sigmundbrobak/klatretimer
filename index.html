@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClimbAlong - Onsite Auto-Timer (P2P)</title>
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <title>Klatretimer Skysynk</title>
     <style>
         body {
             color: #fff;
@@ -17,7 +16,7 @@
             margin: 0;
             overflow: hidden;
             background-color: #f44336;
-            transition: background-color 0.2s ease;
+            transition: background-color 0.3s ease;
         }
         #timer-display {
             font-size: 35vw;
@@ -37,41 +36,30 @@
             bottom: 30px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0,0,0,0.85);
-            padding: 15px 25px;
-            border-radius: 12px;
+            background: rgba(0,0,0,0.8);
+            padding: 15px;
+            border-radius: 8px;
             z-index: 9999;
             text-align: center;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         }
         button {
-            font-size: 20px;
-            padding: 12px 25px;
-            margin: 5px;
+            font-size: 24px;
+            padding: 15px 30px;
+            margin: 5px 10px;
             cursor: pointer;
             border: none;
-            border-radius: 6px;
+            border-radius: 5px;
             font-weight: bold;
         }
-        input {
-            font-size: 16px;
-            padding: 10px;
-            border-radius: 6px;
-            border: none;
-            margin-right: 5px;
-            width: 150px;
-            text-align: center;
-        }
-        #p2p-info {
+        #status {
             font-size: 14px;
-            color: #1cf;
-            margin-bottom: 8px;
-            font-weight: bold;
+            color: #aaa;
+            margin-top: 5px;
         }
         #version-tag {
             font-size: 12px;
-            color: #888;
-            margin-top: 8px;
+            color: #666;
+            margin-top: 5px;
         }
     </style>
 </head>
@@ -81,18 +69,11 @@
     <div id="timer-display">00:30</div>
 
     <div id="admin-panel">
-        <div id="p2p-info">Genererer din skjerm-ID...</div>
-        
-        <div id="connect-row" style="margin-bottom: 10px;">
-            <input type="text" id="peer-id-input" placeholder="Tast inn TV-ens ID">
-            <button id="btn-connect" style="background:#2196f3; color:white; font-size:16px; padding:10px 15px;">Koble til TV</button>
-        </div>
-
         <button id="btn-start" style="background:#4caf50; color:white">START</button>
-        <button id="btn-stop" style="background:#e91e63; color:white">STOPP</button>
+        <button id="btn-stop" style="background:#2196f3; color:white">STOPP</button>
         <button id="btn-reset" style="background:#ff9800; color:white">RESET</button>
-        
-        <div id="version-tag">Versjon: v0.3 (P2P-Tunnel)</div>
+        <div id="status">Kobler til synkronisering...</div>
+        <div id="version-tag">Versjon: v1.0 (Auto-loop)</div>
     </div>
 
     <script>
@@ -100,15 +81,11 @@
         let phase = 'prep'; 
         let isRunning = false;
         let timerInterval = null;
-        
-        // P2P Variabler
-        let peer = null;
-        let conn = null;
 
         const body = document.body;
         const display = document.getElementById('timer-display');
         const phaseHeader = document.getElementById('phase-header');
-        const p2pInfo = document.getElementById('p2p-info');
+        const statusDiv = document.getElementById('status');
 
         // Lydfunksjon
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -116,13 +93,13 @@
             try {
                 if (audioCtx.state === 'suspended') audioCtx.resume();
                 const oscillator = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
+                const gainNode = audioCtx.createGain();
                 oscillator.type = 'sine';
                 oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime); 
-                gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
-                oscillator.connect(gain); gain.connect(audioCtx.destination);
+                gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                oscillator.connect(gainNode); gainNode.connect(audioCtx.destination);
                 oscillator.start(); oscillator.stop(audioCtx.currentTime + duration);
-            } catch(e) {}
+            } catch(e) { console.log("Lydblokkert:", e); }
         }
 
         function updateUI() {
@@ -140,11 +117,15 @@
                 updateUI();
             } else {
                 if (phase === 'prep') {
+                    // Klargjøring ferdig -> Start klatring
                     playBeep(880, 0.5); 
-                    phase = 'climb'; timeLeft = 300; 
+                    phase = 'climb'; 
+                    timeLeft = 300; 
                 } else {
+                    // Klatring ferdig -> Gå automatisk tilbake til klargjøring!
                     playBeep(440, 1.0); 
-                    phase = 'prep'; timeLeft = 30; 
+                    phase = 'prep'; 
+                    timeLeft = 30; 
                 }
                 updateUI();
             }
@@ -154,60 +135,33 @@
         function localStop() { isRunning = false; clearInterval(timerInterval); timerInterval = null; }
         function localReset() { isRunning = false; clearInterval(timerInterval); timerInterval = null; phase = 'prep'; timeLeft = 30; updateUI(); }
 
-        // --- OPPSETT AV DIREKTE P2P-TUNNEL ---
-        // Generer en tilfeldig ID for denne spesifikke skjermen mellom 100 og 999
-        const myId = "klatre-" + Math.floor(100 + Math.random() * 900);
+        // --- SKYSYNKRONISERING VIA NTFY ---
+        const TOPIC = "klatretimer_onsite_klubb_2026"; 
+        const eventSource = new EventSource(`https://ntfy.sh/${TOPIC}/sse`);
         
-        peer = new Peer(myId);
-
-        peer.on('open', (id) => {
-            p2pInfo.innerText = "Denne skjermens ID: " + id;
-        });
-
-        // Hva skjer når denne enheten (f.eks TV-en) mottar en tilkobling fra kontroll-PC?
-        peer.on('connection', (incomingConn) => {
-            conn = incomingConn;
-            setupDataListener();
-            p2pInfo.innerText = "Status: Fjernstyrt av PC! 🟢";
-            document.getElementById('connect-row').style.display = 'none'; // Gjem koblingsfeltet på TV-en
-        });
-
-        // Lytt etter start/stopp-ordrer gjennom tunnelen
-        function setupDataListener() {
-            conn.on('data', (data) => {
-                if (data === 'start') localStart();
-                if (data === 'stop') localStop();
-                if (data === 'reset') localReset();
-            });
-            conn.on('close', () => {
-                p2pInfo.innerText = "Mistet kobling. ID: " + myId;
-            });
-        }
-
-        // Knapp: Koble fra kontroll-PC til TV-skjermen
-        document.getElementById('btn-connect').onclick = () => {
-            const targetId = document.getElementById('peer-id-input').value.trim();
-            if (targetId) {
-                p2pInfo.innerText = "Kobler til " + targetId + "...";
-                conn = peer.connect(targetId);
-                
-                conn.on('open', () => {
-                    p2pInfo.innerText = "Tilkoblet TV! Du styrer nå storskjermen. 🚀";
-                });
-                
-                setupDataListener();
-            }
+        eventSource.onopen = () => {
+            statusDiv.innerText = "Tilkoblet skyen! Synkronisering aktiv.";
+        };
+        
+        eventSource.onerror = () => {
+            statusDiv.innerText = "Gjenoppretter forbindelse...";
         };
 
-        // Send kommando gjennom tunnelen, OG kjør lokalt
-        function sendCommand(actionName) {
-            if (actionName === 'start') localStart();
-            if (actionName === 'stop') localStop();
-            if (actionName === 'reset') localReset();
+        eventSource.onmessage = (event) => {
+            try {
+                const eventData = JSON.parse(event.data);
+                const action = eventData.message;
+                if (action === 'start') localStart();
+                if (action === 'stop') localStop();
+                if (action === 'reset') localReset();
+            } catch(e) { }
+        };
 
-            if (conn && conn.open) {
-                conn.send(actionName);
-            }
+        function sendCommand(actionName) {
+            fetch(`https://ntfy.sh/${TOPIC}`, {
+                method: 'POST',
+                body: actionName
+            }).catch(e => console.error("Kunne ikke sende:", e));
         }
 
         document.getElementById('btn-start').onclick = () => sendCommand('start');
